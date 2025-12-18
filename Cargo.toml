@@ -1,0 +1,21 @@
+[package]
+name = "rust_ocr_det"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# OpenVINO binding สำหรับ Rust
+openvino = { version = "0.9", features = ["runtime-linking"] }
+
+# จัดการรูปภาพ (Resize, Save, Draw)
+image = "0.24" 
+imageproc = "0.23" 
+
+# จัดการ Array หลายมิติ
+ndarray = "0.15"
+
+# จัดการ Error
+anyhow = "1.0"
+cfg-if = "1.0"
+log = "0.4"
+env_logger = "0.11"
