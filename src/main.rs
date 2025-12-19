@@ -1,12 +1,12 @@
 use anyhow::Result;
-use image::{GenericImageView, Rgba, Pixel};
 use image::imageops::FilterType;
+use image::{GenericImageView, Pixel, Rgba};
 use ndarray::Array4;
 use openvino::{Core, Tensor};
 
 // --- ตั้งค่า Parameter ---
 const MODEL_XML: &str = "modelvino/model.xml";
-const MODEL_BIN: &str = "modelvino/model.bin"; // จำเป็นต้องระบุ path bin ใน Rust บางเวอร์ชัน
+const MODEL_BIN: &str = "modelvino/model.bin";
 const IMAGE_PATH: &str = "image/image.png";
 const OUTPUT_PATH: &str = "result2_rust.png";
 const INPUT_SIZE: u32 = 640;
@@ -27,9 +27,15 @@ fn main() -> Result<()> {
         let tbb_dir = openvino_dir.join("runtime/3rdparty/tbb/bin");
 
         let current_path = env::var("PATH").unwrap_or_default();
-        let new_path = format!("{};{};{}", bin_dir.display(), tbb_dir.display(), current_path);
-        
-        env::set_var("PATH", new_path);
+        let new_path = format!(
+            "{};{};{}",
+            bin_dir.display(),
+            tbb_dir.display(),
+            current_path
+        );
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
     }
 
     println!("--- Starting Rust OpenVINO OCR Detection ---");
@@ -37,12 +43,12 @@ fn main() -> Result<()> {
     // 1. Setup OpenVINO Core
     // 1. Setup OpenVINO Core
     let mut core = Core::new()?;
-    
+
     // โหลดโมเดล (ต้องใช้ไฟล์ .xml)
     // หมายเหตุ: Rust binding บางตัวจะหา .bin เอง แต่ระบุไปเลยชัวร์กว่าถ้า API รองรับ
     // ในที่นี้เราใช้ read_model_from_file แบบมาตรฐาน
     let model = core.read_model_from_file(MODEL_XML, MODEL_BIN)?;
-    
+
     // Compile โมเดลลง CPU
     let mut compiled_model = core.compile_model(&model, "CPU".into())?;
     let mut infer_request = compiled_model.create_infer_request()?;
@@ -54,7 +60,7 @@ fn main() -> Result<()> {
 
     // Resize เป็น 640x640
     let resized_img = img.resize_exact(INPUT_SIZE, INPUT_SIZE, FilterType::Triangle);
-    
+
     // เตรียมข้อมูล Tensor (NCHW Format)
     // Mean & Std ของ PaddleOCR
     let mean = [0.485, 0.456, 0.406];
@@ -67,7 +73,8 @@ fn main() -> Result<()> {
         // Normalize: (pixel/255 - mean) / std
         input_data[[0, 0, y as usize, x as usize]] = ((rgb[0] as f32 / 255.0) - mean[0]) / std[0]; // R
         input_data[[0, 1, y as usize, x as usize]] = ((rgb[1] as f32 / 255.0) - mean[1]) / std[1]; // G
-        input_data[[0, 2, y as usize, x as usize]] = ((rgb[2] as f32 / 255.0) - mean[2]) / std[2]; // B
+        input_data[[0, 2, y as usize, x as usize]] = ((rgb[2] as f32 / 255.0) - mean[2]) / std[2];
+        // B
     }
 
     // 3. Inference
@@ -75,18 +82,20 @@ fn main() -> Result<()> {
     // หมายเหตุ: การสร้าง Tensor ใน Rust อาจแตกต่างกันตามเวอร์ชัน crate
     // โค้ดนี้อิงตาม concept ทั่วไปของการส่ง pointer
     let tensor_data = input_data.as_slice().unwrap();
-    
+
     let input = compiled_model.get_input_by_index(0)?;
     let input_type = input.get_element_type()?;
-    
+
     // Model has dynamic shape, so we specify the shape explicitly for the input tensor
     // openvino::Shape::new takes &[i64] and returns Result<Shape>
     let input_shape = openvino::Shape::new(&[1, 3, INPUT_SIZE as i64, INPUT_SIZE as i64])?;
-    
+
     let mut input_tensor = Tensor::new(input_type, &input_shape)?;
-    
-    input_tensor.get_data_mut::<f32>()?.copy_from_slice(tensor_data);
-    
+
+    input_tensor
+        .get_data_mut::<f32>()?
+        .copy_from_slice(tensor_data);
+
     infer_request.set_tensor(&input.get_name()?, &input_tensor)?;
 
     println!("Running inference...");
@@ -95,14 +104,14 @@ fn main() -> Result<()> {
     // 4. Post-processing (Get Output)
     let output = compiled_model.get_output_by_index(0)?;
     let output_tensor = infer_request.get_tensor(&output.get_name()?)?;
-    
+
     // ดึงข้อมูลออกมาเป็น Vector<f32>
     // Output shape ปกติคือ [1, 1, 640, 640]
-    let output_data: Vec<f32> = output_tensor.get_data()?.to_vec(); 
-    
+    let output_data: Vec<f32> = output_tensor.get_data()?.to_vec();
+
     // 5. Visualization (Plot Heatmap)
     println!("Visualizing output...");
-    
+
     // สร้างภาพผลลัพธ์โดยก๊อปปี้จากภาพต้นฉบับ
     let mut output_image = img.to_rgba8();
 
@@ -131,7 +140,7 @@ fn main() -> Result<()> {
                     let pixel = output_image.get_pixel_mut(real_x, real_y);
                     // ผสมสีแดง (Red Overlay)
                     // R=255, G=เดิม/2, B=เดิม/2, A=255
-                    *pixel = Rgba([255, pixel[1]/2, pixel[2]/2, 255]);
+                    *pixel = Rgba([255, pixel[1] / 2, pixel[2] / 2, 255]);
                 }
             }
         }
